@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Live Transcribe & Translate - Deepgram Edition</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            --background-color: #121212;
+            --text-color: #e0e0e0;
+            --primary-color: #4CAF50;
+            --danger-color: #f44336;
+            --surface-color: #1e1e1e;
+            --border-radius: 8px;
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            font-family: var(--font-family);
+            margin: 0;
+            padding: 0;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            background: var(--surface-color);
+            border-bottom: 1px solid #333;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            min-height: 60px;
+            z-index: 100;
+        }
+
+        .language-indicator {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 15px;
+            border-radius: 15px;
+            font-size: 14px;
+        }
+
+        .status {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 15px;
+            border-radius: 15px;
+            font-size: 14px;
+            transition: background-color 0.3s ease;
+        }
+
+        .listening { background: rgba(76, 175, 80, 0.7); color: white; }
+        .not-listening { background: rgba(244, 67, 54, 0.7); color: white; }
+
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .controls {
+            text-align: center;
+            padding: 15px;
+            background: var(--surface-color);
+            border-radius: var(--border-radius);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .action-buttons button {
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            font-size: 17px;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+
+        .start-btn { background: var(--primary-color); }
+        .stop-btn { background: var(--danger-color); }
+
+        .flag-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .flag-section-label {
+            font-size: 12px;
+            color: #ccc;
+            margin-right: 8px;
+        }
+
+        .flag-btn {
+            background: none;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            padding: 4px;
+            min-width: 2.8em;
+            min-height: 2.8em;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .flag-btn:hover {
+            transform: scale(1.05);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .flag-btn.active {
+            border-color: var(--primary-color);
+            background: rgba(76, 175, 80, 0.15);
+        }
+
+        .flag-icon {
+            width: 2.2em;
+            height: 1.6em;
+            object-fit: cover;
+            border-radius: 3px;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .caption-display {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 10px 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .caption-text {
+            font-size: 3.5em;
+            line-height: 1.3;
+            font-weight: bold;
+            color: var(--text-color);
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
+            max-width: 95%;
+            word-wrap: break-word;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 25px;
+            border-radius: var(--border-radius);
+            min-height: 150px;
+            max-height: calc(100vh - 250px);
+            overflow-y: auto;
+            display: block;
+            width: 100%;
+            text-align: center;
+            scroll-behavior: smooth;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .connection-status {
+            position: absolute;
+            bottom: 15px;
+            right: 15px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .connected { background: rgba(76, 175, 80, 0.7); }
+        .disconnected { background: rgba(244, 67, 54, 0.7); }
+
+        @media (max-width: 768px) {
+            .caption-text {
+                font-size: 2.8em;
+                padding: 20px;
+                max-height: calc(100vh - 220px);
+            }
+            .controls { gap: 10px; padding: 10px; flex-direction: column; }
+            .top-bar {
+                flex-direction: column;
+                padding: 10px;
+                gap: 10px;
+            }
+            .flag-section {
+                justify-content: center;
+                gap: 6px;
+            }
+            .flag-btn {
+                min-width: 2.4em;
+                min-height: 2.4em;
+            }
+            .flag-icon {
+                width: 1.8em;
+                height: 1.3em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <div class="flag-section">
+            <span class="flag-section-label">Input:</span>
+            <button class="flag-btn active" data-lang-type="input" data-lang="nl" title="Dutch">
+                <img src="https://flagcdn.com/w40/nl.png" alt="NL" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="input" data-lang="en" title="English">
+                <img src="https://flagcdn.com/w40/us.png" alt="EN" class="flag-icon">
+            </button>
+        </div>
+        
+        <div class="flag-section">
+            <span class="flag-section-label">Output:</span>
+            <button class="flag-btn active" data-lang-type="output" data-lang="en" title="English">
+                <img src="https://flagcdn.com/w40/us.png" alt="EN" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="es" title="Spanish">
+                <img src="https://flagcdn.com/w40/es.png" alt="ES" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="fr" title="French">
+                <img src="https://flagcdn.com/w40/fr.png" alt="FR" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="de" title="German">
+                <img src="https://flagcdn.com/w40/de.png" alt="DE" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="it" title="Italian">
+                <img src="https://flagcdn.com/w40/it.png" alt="IT" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="pt" title="Portuguese">
+                <img src="https://flagcdn.com/w40/pt.png" alt="PT" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="nl" title="Dutch">
+                <img src="https://flagcdn.com/w40/nl.png" alt="NL" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="ru" title="Russian">
+                <img src="https://flagcdn.com/w40/ru.png" alt="RU" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="zh" title="Chinese">
+                <img src="https://flagcdn.com/w40/cn.png" alt="CN" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="ja" title="Japanese">
+                <img src="https://flagcdn.com/w40/jp.png" alt="JP" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="output" data-lang="ar" title="Arabic">
+                <img src="https://flagcdn.com/w40/sa.png" alt="AR" class="flag-icon">
+            </button>
+        </div>
+        
+        <div class="status not-listening" id="status">Not Connected</div>
+    </div>
+
+    <div class="main-container">
+        <div class="controls">
+            <div class="action-buttons">
+                <button class="start-btn" id="startBtn" onclick="startListening()">Start Listening</button>
+                <button class="start-btn stop-btn" id="stopBtn" onclick="stopListening()" style="display: none;">Stop Listening</button>
+            </div>
+            
+
+        </div>
+
+        <div class="caption-display">
+            <span class="caption-text" id="captionText">
+                Ready for live transcription and translation
+            </span>
+        </div>
+    </div>
+
+    <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
+
+    <script>
+        let socket = null;
+        let audioContext = null;
+        let microphone = null;
+        let processor = null;
+        let isListening = false;
+        let accumulatedText = '';
+        let lastFinalLength = 0;
+        let currentInputLang = 'nl';
+        let currentOutputLang = 'en';
+
+        const captionElement = document.getElementById('captionText');
+        const statusElement = document.getElementById('status');
+        const connectionStatusElement = document.getElementById('connectionStatus');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+
+        const languageNames = {
+            'nl': 'Dutch', 'en': 'English', 'de': 'German', 'fr': 'French',
+            'es': 'Spanish', 'pl': 'Polish', 'it': 'Italian', 'tr': 'Turkish',
+            'ar': 'Arabic', 'zh': 'Chinese', 'ru': 'Russian', 'pt': 'Portuguese',
+            'ja': 'Japanese'
+        };
+
+        // Initialize WebSocket connection
+        function initWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+            
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                console.log('Connected to server');
+                connectionStatusElement.textContent = 'Connected';
+                connectionStatusElement.className = 'connection-status connected';
+                statusElement.textContent = 'Connected';
+                statusElement.className = 'status not-listening';
+                updateLanguageConfig();
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'transcription' || data.type === 'translation') {
+                    if (data.isFinal) {
+                        // Add final text to accumulated text
+                        accumulatedText += ' ' + data.text;
+                        lastFinalLength = accumulatedText.length;
+                        
+                        // Keep last 1000 characters for readability
+                        if (accumulatedText.length > 1000) {
+                            const trimPoint = accumulatedText.indexOf(' ', accumulatedText.length - 800);
+                            accumulatedText = accumulatedText.substring(trimPoint > 0 ? trimPoint : accumulatedText.length - 800);
+                            lastFinalLength = accumulatedText.length;
+                        }
+                        
+                        updateDisplay(accumulatedText.trim());
+                    } else {
+                        // For interim results, show accumulated + current interim
+                        const currentText = accumulatedText + ' ' + data.text;
+                        updateDisplay(currentText.trim());
+                    }
+                } else if (data.type === 'status') {
+                    statusElement.textContent = data.message;
+                    if (data.message.includes('Ready') || data.message === 'Stopped') {
+                        // Reset accumulated text when starting fresh
+                        accumulatedText = '';
+                        lastFinalLength = 0;
+                        updateDisplay('Ready for live transcription...');
+                    }
+                } else if (data.type === 'error') {
+                    updateDisplay(`Error: ${data.message}`);
+                    statusElement.textContent = 'Error';
+                    statusElement.className = 'status not-listening';
+                }
+            };
+
+            socket.onclose = () => {
+                console.log('Disconnected from server');
+                connectionStatusElement.textContent = 'Disconnected';
+                connectionStatusElement.className = 'connection-status disconnected';
+                statusElement.textContent = 'Disconnected';
+                statusElement.className = 'status not-listening';
+                
+                // Attempt to reconnect after 3 seconds
+                setTimeout(initWebSocket, 3000);
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                captionElement.textContent = 'Connection error. Retrying...';
+            };
+        }
+
+        // Initialize audio processing
+        async function initAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                microphone = audioContext.createMediaStreamSource(stream);
+                
+                // Use MediaRecorder for modern audio capture (replaces deprecated ScriptProcessorNode)
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=pcm',
+                    audioBitsPerSecond: 16000
+                });
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0 && isListening && socket && socket.readyState === WebSocket.OPEN) {
+                        event.data.arrayBuffer().then(buffer => {
+                            socket.send(buffer);
+                        });
+                    }
+                };
+                
+                // Start recording in small chunks for real-time streaming
+                processor = {
+                    start: () => {
+                        mediaRecorder.start(100); // 100ms chunks for real-time
+                    },
+                    stop: () => {
+                        if (mediaRecorder.state !== 'inactive') {
+                            mediaRecorder.stop();
+                        }
+                    }
+                };
+                
+                console.log('Audio initialized with MediaRecorder');
+                return true;
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                
+                // Fallback to ScriptProcessorNode if MediaRecorder fails
+                try {
+                    console.log('Falling back to ScriptProcessorNode...');
+                    
+                    // Create a script processor for audio data (fallback)
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    processor.onaudioprocess = (event) => {
+                        if (isListening && socket && socket.readyState === WebSocket.OPEN) {
+                            const inputData = event.inputBuffer.getChannelData(0);
+                            const outputData = new Int16Array(inputData.length);
+                            
+                            // Convert float32 to int16
+                            for (let i = 0; i < inputData.length; i++) {
+                                outputData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+                            }
+                            
+                            socket.send(outputData.buffer);
+                        }
+                    };
+                    
+                    microphone.connect(processor);
+                    processor.connect(audioContext.destination);
+                    
+                    console.log('Audio initialized with ScriptProcessorNode (fallback)');
+                    return true;
+                } catch (fallbackError) {
+                    console.error('Error with fallback audio setup:', fallbackError);
+                    alert('Error accessing microphone. Please check permissions.');
+                    return false;
+                }
+            }
+        }
+
+        // Smooth display update function
+        function updateDisplay(text) {
+            if (captionElement.textContent === text) return;
+            
+            // Smooth transition
+            captionElement.style.opacity = '0.9';
+            
+            setTimeout(() => {
+                captionElement.textContent = text;
+                captionElement.style.opacity = '1';
+                
+                // Smooth scroll to bottom if content overflows
+                if (captionElement.scrollHeight > captionElement.clientHeight) {
+                    captionElement.scrollTo({
+                        top: captionElement.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }
+            }, 50);
+        }
+
+        function updateLanguageConfig() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: 'config',
+                    inputLanguage: currentInputLang,
+                    outputLanguage: currentOutputLang
+                }));
+                
+                // Reset accumulated text when changing languages
+                accumulatedText = '';
+                lastFinalLength = 0;
+            }
+        }
+
+        // Handle flag button clicks
+        function handleFlagClick(button) {
+            const langType = button.dataset.langType;
+            const langCode = button.dataset.lang;
+            
+            // Remove active class from all buttons of this type
+            document.querySelectorAll(`[data-lang-type="${langType}"]`).forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Add active class to clicked button
+            button.classList.add('active');
+            
+            // Update current language
+            if (langType === 'input') {
+                currentInputLang = langCode;
+            } else {
+                currentOutputLang = langCode;
+            }
+            
+            // Update server configuration
+            updateLanguageConfig();
+        }
+
+        async function startListening() {
+            if (!audioContext) {
+                const audioInitialized = await initAudio();
+                if (!audioInitialized) return;
+            }
+            
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+            
+            // Reset accumulated text for fresh start
+            accumulatedText = '';
+            lastFinalLength = 0;
+            updateDisplay('Listening...');
+            
+            isListening = true;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'inline-block';
+            statusElement.textContent = 'Starting...';
+            statusElement.className = 'status listening';
+            
+            // Start audio recording
+            if (processor && processor.start) {
+                processor.start();
+            }
+            
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'start' }));
+            }
+        }
+
+        function stopListening() {
+            isListening = false;
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            statusElement.textContent = 'Stopped';
+            statusElement.className = 'status not-listening';
+            
+            // Stop audio recording
+            if (processor && processor.stop) {
+                processor.stop();
+            }
+            
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'stop' }));
+            }
+        }
+
+        // Initialize everything when page loads
+        window.addEventListener('load', () => {
+            initWebSocket();
+            
+            // Add event listeners to all flag buttons
+            document.querySelectorAll('.flag-btn').forEach(button => {
+                button.addEventListener('click', () => handleFlagClick(button));
+            });
+            
+            updateLanguageConfig();
+        });
+    </script>
+</body>
+</html> 
