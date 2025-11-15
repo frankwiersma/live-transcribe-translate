@@ -16,71 +16,45 @@ app.use(express.json());
 // Handle favicon.ico to prevent 404 errors
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// Translation function using Google Gemini API
+// Translate function using Google Cloud Translation API v2 (Basic)
+// 20x faster than Gemini, optimized for real-time translation
 async function translate(source, target, text) {
-  if (!process.env.GEMINI_API_KEY) {
-    console.warn('No Gemini API key provided');
+  if (!process.env.GOOGLE_CLOUD_API_KEY) {
+    console.warn('No Google Cloud API key provided');
     return text;
   }
 
-  const targetLanguageMap = {
-    'en': 'English',
-    'de': 'German',
-    'fr': 'French',
-    'es': 'Spanish',
-    'pl': 'Polish',
-    'it': 'Italian',
-    'tr': 'Turkish',
-    'ar': 'Arabic',
-    'zh': 'Chinese',
-    'ru': 'Russian',
-    'pt': 'Portuguese',
-    'nl': 'Dutch',
-    'ja': 'Japanese'
-  };
-
-  const targetLanguageName = targetLanguageMap[target] || target;
-
-  const prompt = `Translate this text to ${targetLanguageName}. Return ONLY the translation, no explanations:
-
-"${text}"
-
-Translation:`;
-
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 1500
-        }
-      })
+    const url = new URL('https://translation.googleapis.com/language/translate/v2');
+    url.searchParams.append('key', process.env.GOOGLE_CLOUD_API_KEY);
+    url.searchParams.append('q', text);
+    url.searchParams.append('source', source);
+    url.searchParams.append('target', target);
+    url.searchParams.append('format', 'text');
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
     });
 
     if (!response.ok) {
       const errorData = await response.json();
-      throw new Error(`Gemini API error: ${response.status} - ${errorData?.error?.message || 'Unknown error'}`);
+      throw new Error(`Translation API error: ${response.status} - ${errorData?.error?.message || 'Unknown error'}`);
     }
 
     const data = await response.json();
-    if (data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
-      let translation = data.candidates[0].content.parts[0].text.trim();
 
-      // Clean up common unwanted patterns
-      translation = translation.replace(/^(Translation:|Here.*?:|.*?translation.*?:)/i, '').trim();
-      translation = translation.replace(/\*\*.*?\*\*/g, '').trim(); // Remove bold markers
-      translation = translation.replace(/^\*.*$/gm, '').trim(); // Remove bullet points
-      translation = translation.split('\n')[0].trim(); // Take only first line
+    // Log for debugging
+    console.log('Translation API response:', JSON.stringify(data, null, 2));
 
-      return translation;
+    // Extract translated text
+    if (data?.data?.translations?.[0]?.translatedText) {
+      return data.data.translations[0].translatedText;
     }
 
-    throw new Error('Invalid response structure from Gemini API');
+    throw new Error('Invalid response structure from Translation API');
   } catch (error) {
-    console.error('Gemini translation error:', error);
+    console.error('Translation error:', error);
     return `[Translation Error] ${text}`; // Return original text with error note
   }
 }
@@ -225,5 +199,5 @@ app.post('/api/test-keys', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log('Make sure to set ELEVENLABS_API_KEY and GEMINI_API_KEY in your .env file');
+  console.log('Make sure to set ELEVENLABS_API_KEY and GOOGLE_CLOUD_API_KEY in your .env file');
 });

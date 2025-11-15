@@ -284,6 +284,12 @@
                 <button class="start-btn" id="startBtn" onclick="startListening()">Start Listening</button>
                 <button class="start-btn stop-btn" id="stopBtn" onclick="stopListening()" style="display: none;">Stop Listening</button>
             </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                    <input type="checkbox" id="noTranslationMode" style="cursor: pointer; width: 18px; height: 18px;">
+                    <span style="font-size: 14px;">Transcription Only (No Translation)</span>
+                </label>
+            </div>
         </div>
 
         <div class="caption-display">
@@ -297,7 +303,7 @@
 
     <!-- ElevenLabs SDK via CDN -->
     <script type="module">
-        import { Scribe } from 'https://cdn.jsdelivr.net/npm/elevenlabs@0.18.2/+esm';
+        import { Scribe, RealtimeEvents, AudioFormat, CommitStrategy } from 'https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.10.0/+esm';
 
         let translationSocket = null;
         let scribeConnection = null;
@@ -305,6 +311,9 @@
         let accumulatedText = '';
         let currentInputLang = 'nl';
         let currentOutputLang = 'en';
+        let shouldReconnect = false;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 3;
 
         const captionElement = document.getElementById('captionText');
         const statusElement = document.getElementById('status');
@@ -350,8 +359,10 @@
 
             translationSocket.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                console.log('[Translation WebSocket] Received:', data);
 
                 if (data.type === 'translation') {
+                    console.log(`[Translation Received] Text: "${data.text}", isFinal: ${data.isFinal}`);
                     if (data.isFinal) {
                         accumulatedText += ' ' + data.text;
 
@@ -364,6 +375,7 @@
                         updateDisplay(accumulatedText.trim());
                     }
                 } else if (data.type === 'transcription') {
+                    console.log(`[Transcription Received] Text: "${data.text}", isFinal: ${data.isFinal}`);
                     if (data.isFinal) {
                         accumulatedText += ' ' + data.text;
 
@@ -471,6 +483,37 @@
             }
         }
 
+        // Reconnection logic with exponential backoff
+        async function attemptReconnect() {
+            if (!shouldReconnect || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    updateDisplay('Connection failed after multiple attempts. Please try again.');
+                    statusElement.textContent = 'Connection Failed';
+                    statusElement.className = 'status not-listening';
+                }
+                shouldReconnect = false;
+                reconnectAttempts = 0;
+                return;
+            }
+
+            reconnectAttempts++;
+            const delay = Math.pow(2, reconnectAttempts - 1) * 1000; // Exponential backoff: 1s, 2s, 4s
+
+            updateDisplay(`Reconnecting in ${delay / 1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+            console.log(`Reconnection attempt ${reconnectAttempts} in ${delay}ms`);
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+
+            try {
+                await startListening();
+                shouldReconnect = false;
+                reconnectAttempts = 0;
+            } catch (error) {
+                console.error(`Reconnection attempt ${reconnectAttempts} failed:`, error);
+                await attemptReconnect();
+            }
+        }
+
         async function startListening() {
             try {
                 statusElement.textContent = 'Initializing...';
@@ -485,41 +528,59 @@
                     token: token,
                     modelId: 'scribe_v2_realtime',
                     languageCode: languageCodeMap[currentInputLang] || currentInputLang,
-                    audioFormat: 'pcm_16000', // 16kHz PCM for optimal quality/bandwidth balance
-                    commitStrategy: 'vad', // Use Voice Activity Detection for automatic segmentation
+                    audioFormat: AudioFormat.PCM_16000, // 16kHz PCM for optimal quality/bandwidth balance
+                    commitStrategy: CommitStrategy.VAD, // Use Voice Activity Detection for automatic segmentation
                     vadSilenceThresholdSecs: 1.5, // 1.5 seconds of silence before committing
                     vadThreshold: 0.4, // Moderate sensitivity
                     minSpeechDurationMs: 100,
                     minSilenceDurationMs: 100,
-                    includeTimestamps: false
-                });
-
-                // Request microphone access with optimal settings
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        sampleRate: 16000,
-                        channelCount: 1,
+                    includeTimestamps: false,
+                    microphone: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true
                     }
                 });
 
+                // Handle session started event
+                scribeConnection.on(RealtimeEvents.SESSION_STARTED, (data) => {
+                    console.log('Session started:', data);
+                    updateDisplay('Session started. Listening...');
+                    statusElement.textContent = 'Listening';
+                    statusElement.className = 'status listening';
+                    connectionStatusElement.textContent = 'Connected';
+                    connectionStatusElement.className = 'connection-status connected';
+                });
+
                 // Handle partial transcripts (interim results)
-                scribeConnection.on('partial_transcript', (data) => {
+                scribeConnection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, (data) => {
                     if (data && data.text) {
-                        const currentText = accumulatedText + ' ' + data.text;
-                        updateDisplay(currentText.trim());
+                        const noTranslationMode = document.getElementById('noTranslationMode').checked;
+
+                        // Only show partial transcripts if:
+                        // 1. Translation is disabled (no-translation mode), OR
+                        // 2. Input and output languages are the same (no translation needed)
+                        if (noTranslationMode || currentInputLang === currentOutputLang) {
+                            const currentText = accumulatedText + ' ' + data.text;
+                            updateDisplay(currentText.trim());
+                        } else {
+                            // Show a "listening" indicator instead of untranslated partial text
+                            updateDisplay(accumulatedText ? accumulatedText + ' ...' : 'Listening...');
+                        }
                     }
                 });
 
                 // Handle committed transcripts (final results)
-                scribeConnection.on('committed_transcript', async (data) => {
+                scribeConnection.on(RealtimeEvents.COMMITTED_TRANSCRIPT, async (data) => {
                     if (data && data.text) {
                         const text = data.text;
+                        const noTranslationMode = document.getElementById('noTranslationMode').checked;
+
+                        console.log(`[Committed Transcript] Text: "${text}", NoTranslation: ${noTranslationMode}, Input: ${currentInputLang}, Output: ${currentOutputLang}`);
 
                         // Check if translation is needed
-                        if (currentInputLang !== currentOutputLang && translationSocket && translationSocket.readyState === WebSocket.OPEN) {
+                        if (!noTranslationMode && currentInputLang !== currentOutputLang && translationSocket && translationSocket.readyState === WebSocket.OPEN) {
+                            console.log('[Translation] Sending text for translation...');
                             // Send to translation service
                             translationSocket.send(JSON.stringify({
                                 type: 'translate',
@@ -527,7 +588,8 @@
                                 isFinal: true
                             }));
                         } else {
-                            // No translation needed, just append
+                            // No translation needed, just append transcription
+                            console.log('[No Translation] Appending text directly');
                             accumulatedText += ' ' + text;
 
                             if (accumulatedText.length > 1000) {
@@ -540,65 +602,64 @@
                     }
                 });
 
-                // Handle errors
-                scribeConnection.on('error', (error) => {
+                // Handle errors with specific error types
+                scribeConnection.on(RealtimeEvents.ERROR, (error) => {
                     console.error('Scribe error:', error);
-                    updateDisplay(`Error: ${error.message || 'Connection error'}`);
+
+                    let errorMessage = 'Connection error';
+                    let shouldRetry = false;
+
+                    if (error.type === 'auth_error') {
+                        errorMessage = 'Authentication failed. Please check your API key.';
+                    } else if (error.type === 'quota_exceeded') {
+                        errorMessage = 'Usage quota exceeded. Please check your account limits.';
+                    } else if (error.type === 'transcriber_error') {
+                        errorMessage = 'Transcription engine error. Attempting to reconnect...';
+                        shouldRetry = true;
+                    } else if (error.type === 'input_error') {
+                        errorMessage = 'Invalid audio input. Please check your microphone.';
+                    } else if (error.message) {
+                        errorMessage = error.message;
+                        shouldRetry = true;
+                    } else {
+                        shouldRetry = true;
+                    }
+
+                    updateDisplay(`Error: ${errorMessage}`);
                     statusElement.textContent = 'Error';
                     statusElement.className = 'status not-listening';
+                    connectionStatusElement.textContent = 'Error';
+                    connectionStatusElement.className = 'connection-status disconnected';
+
+                    // Trigger reconnection for transient errors
+                    if (shouldRetry && isListening) {
+                        shouldReconnect = true;
+                    }
                 });
 
                 // Handle connection close
-                scribeConnection.on('close', () => {
+                scribeConnection.on(RealtimeEvents.CLOSE, async () => {
                     console.log('Scribe connection closed');
                     if (isListening) {
                         statusElement.textContent = 'Disconnected';
                         statusElement.className = 'status not-listening';
+                        connectionStatusElement.textContent = 'Disconnected';
+                        connectionStatusElement.className = 'connection-status disconnected';
+
+                        // Attempt reconnection if needed
+                        if (shouldReconnect) {
+                            await attemptReconnect();
+                        }
                     }
                 });
 
-                // Start streaming audio to Scribe
-                const audioContext = new AudioContext({ sampleRate: 16000 });
-                const source = audioContext.createMediaStreamSource(stream);
-                const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-                processor.onaudioprocess = (event) => {
-                    if (isListening && scribeConnection) {
-                        const inputData = event.inputBuffer.getChannelData(0);
-                        const outputData = new Int16Array(inputData.length);
-
-                        // Convert float32 to int16
-                        for (let i = 0; i < inputData.length; i++) {
-                            outputData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
-                        }
-
-                        // Send audio to Scribe
-                        scribeConnection.send({
-                            audio_base_64: btoa(String.fromCharCode(...new Uint8Array(outputData.buffer))),
-                            sample_rate: 16000
-                        });
-                    }
-                };
-
-                source.connect(processor);
-                processor.connect(audioContext.destination);
-
-                // Store for cleanup
-                window.audioContext = audioContext;
-                window.audioProcessor = processor;
-                window.audioStream = stream;
-
                 // Reset accumulated text
                 accumulatedText = '';
-                updateDisplay('Listening...');
 
+                // Update UI state
                 isListening = true;
                 startBtn.style.display = 'none';
                 stopBtn.style.display = 'inline-block';
-                statusElement.textContent = 'Listening';
-                statusElement.className = 'status listening';
-                connectionStatusElement.textContent = 'Connected';
-                connectionStatusElement.className = 'connection-status connected';
 
             } catch (error) {
                 console.error('Error starting Scribe:', error);
@@ -621,26 +682,14 @@
             connectionStatusElement.textContent = 'Disconnected';
             connectionStatusElement.className = 'connection-status disconnected';
 
-            // Clean up audio
-            if (window.audioProcessor) {
-                window.audioProcessor.disconnect();
-                window.audioProcessor = null;
-            }
-
-            if (window.audioContext) {
-                await window.audioContext.close();
-                window.audioContext = null;
-            }
-
-            if (window.audioStream) {
-                window.audioStream.getTracks().forEach(track => track.stop());
-                window.audioStream = null;
-            }
-
-            // Close Scribe connection
+            // Close Scribe connection (SDK handles cleanup of audio resources)
             if (scribeConnection) {
-                await scribeConnection.close();
-                scribeConnection = null;
+                try {
+                    await scribeConnection.disconnect();
+                    scribeConnection = null;
+                } catch (error) {
+                    console.error('Error disconnecting:', error);
+                }
             }
         }
 
