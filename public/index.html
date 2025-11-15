@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Live Transcribe & Translate - Deepgram Edition</title>
+    <title>Live Transcribe & Translate - ElevenLabs Scribe v2 Realtime</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
@@ -221,8 +221,23 @@
             <button class="flag-btn" data-lang-type="input" data-lang="en" title="English">
                 <img src="https://flagcdn.com/w40/us.png" alt="EN" class="flag-icon">
             </button>
+            <button class="flag-btn" data-lang-type="input" data-lang="de" title="German">
+                <img src="https://flagcdn.com/w40/de.png" alt="DE" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="input" data-lang="fr" title="French">
+                <img src="https://flagcdn.com/w40/fr.png" alt="FR" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="input" data-lang="es" title="Spanish">
+                <img src="https://flagcdn.com/w40/es.png" alt="ES" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="input" data-lang="it" title="Italian">
+                <img src="https://flagcdn.com/w40/it.png" alt="IT" class="flag-icon">
+            </button>
+            <button class="flag-btn" data-lang-type="input" data-lang="pt" title="Portuguese">
+                <img src="https://flagcdn.com/w40/pt.png" alt="PT" class="flag-icon">
+            </button>
         </div>
-        
+
         <div class="flag-section">
             <span class="flag-section-label">Output:</span>
             <button class="flag-btn active" data-lang-type="output" data-lang="en" title="English">
@@ -259,7 +274,7 @@
                 <img src="https://flagcdn.com/w40/sa.png" alt="AR" class="flag-icon">
             </button>
         </div>
-        
+
         <div class="status not-listening" id="status">Not Connected</div>
     </div>
 
@@ -269,27 +284,25 @@
                 <button class="start-btn" id="startBtn" onclick="startListening()">Start Listening</button>
                 <button class="start-btn stop-btn" id="stopBtn" onclick="stopListening()" style="display: none;">Stop Listening</button>
             </div>
-            
-
         </div>
 
         <div class="caption-display">
             <span class="caption-text" id="captionText">
-                Ready for live transcription and translation
+                Ready for live transcription and translation with ElevenLabs Scribe v2 Realtime
             </span>
         </div>
     </div>
 
     <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
 
-    <script>
-        let socket = null;
-        let audioContext = null;
-        let microphone = null;
-        let processor = null;
+    <!-- ElevenLabs SDK via CDN -->
+    <script type="module">
+        import { Scribe } from 'https://cdn.jsdelivr.net/npm/elevenlabs@0.18.2/+esm';
+
+        let translationSocket = null;
+        let scribeConnection = null;
         let isListening = false;
         let accumulatedText = '';
-        let lastFinalLength = 0;
         let currentInputLang = 'nl';
         let currentOutputLang = 'en';
 
@@ -306,169 +319,111 @@
             'ja': 'Japanese'
         };
 
-        // Initialize WebSocket connection
-        function initWebSocket() {
+        // ISO-639-3 to ISO-639-1 mapping for ElevenLabs language codes
+        const languageCodeMap = {
+            'nl': 'nld',
+            'en': 'eng',
+            'de': 'deu',
+            'fr': 'fra',
+            'es': 'spa',
+            'it': 'ita',
+            'pt': 'por',
+            'pl': 'pol',
+            'tr': 'tur',
+            'ar': 'ara',
+            'zh': 'zho',
+            'ru': 'rus',
+            'ja': 'jpn'
+        };
+
+        // Initialize WebSocket connection to translation server
+        function initTranslationSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}`;
-            
-            socket = new WebSocket(wsUrl);
 
-            socket.onopen = () => {
-                console.log('Connected to server');
-                connectionStatusElement.textContent = 'Connected';
-                connectionStatusElement.className = 'connection-status connected';
-                statusElement.textContent = 'Connected';
-                statusElement.className = 'status not-listening';
+            translationSocket = new WebSocket(wsUrl);
+
+            translationSocket.onopen = () => {
+                console.log('Connected to translation server');
                 updateLanguageConfig();
             };
 
-            socket.onmessage = (event) => {
+            translationSocket.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                
-                if (data.type === 'transcription' || data.type === 'translation') {
+
+                if (data.type === 'translation') {
                     if (data.isFinal) {
-                        // Add final text to accumulated text
                         accumulatedText += ' ' + data.text;
-                        lastFinalLength = accumulatedText.length;
-                        
+
                         // Keep last 1000 characters for readability
                         if (accumulatedText.length > 1000) {
                             const trimPoint = accumulatedText.indexOf(' ', accumulatedText.length - 800);
                             accumulatedText = accumulatedText.substring(trimPoint > 0 ? trimPoint : accumulatedText.length - 800);
-                            lastFinalLength = accumulatedText.length;
                         }
-                        
+
+                        updateDisplay(accumulatedText.trim());
+                    }
+                } else if (data.type === 'transcription') {
+                    if (data.isFinal) {
+                        accumulatedText += ' ' + data.text;
+
+                        if (accumulatedText.length > 1000) {
+                            const trimPoint = accumulatedText.indexOf(' ', accumulatedText.length - 800);
+                            accumulatedText = accumulatedText.substring(trimPoint > 0 ? trimPoint : accumulatedText.length - 800);
+                        }
+
                         updateDisplay(accumulatedText.trim());
                     } else {
-                        // For interim results, show accumulated + current interim
                         const currentText = accumulatedText + ' ' + data.text;
                         updateDisplay(currentText.trim());
                     }
                 } else if (data.type === 'status') {
-                    statusElement.textContent = data.message;
-                    if (data.message.includes('Ready') || data.message === 'Stopped') {
-                        // Reset accumulated text when starting fresh
-                        accumulatedText = '';
-                        lastFinalLength = 0;
-                        updateDisplay('Ready for live transcription...');
-                    }
+                    console.log('Translation service status:', data.message);
                 } else if (data.type === 'error') {
-                    updateDisplay(`Error: ${data.message}`);
-                    statusElement.textContent = 'Error';
-                    statusElement.className = 'status not-listening';
+                    console.error('Translation error:', data.message);
                 }
             };
 
-            socket.onclose = () => {
-                console.log('Disconnected from server');
-                connectionStatusElement.textContent = 'Disconnected';
-                connectionStatusElement.className = 'connection-status disconnected';
-                statusElement.textContent = 'Disconnected';
-                statusElement.className = 'status not-listening';
-                
-                // Attempt to reconnect after 3 seconds
-                setTimeout(initWebSocket, 3000);
+            translationSocket.onclose = () => {
+                console.log('Disconnected from translation server');
+                setTimeout(initTranslationSocket, 3000);
             };
 
-            socket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                captionElement.textContent = 'Connection error. Retrying...';
+            translationSocket.onerror = (error) => {
+                console.error('Translation WebSocket error:', error);
             };
         }
 
-        // Initialize audio processing
-        async function initAudio() {
+        // Fetch ElevenLabs token from server
+        async function fetchScribeToken() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { 
-                        sampleRate: 16000,
-                        channelCount: 1,
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    } 
+                const response = await fetch('/api/scribe-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
                 });
-                
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-                microphone = audioContext.createMediaStreamSource(stream);
-                
-                // Use MediaRecorder for modern audio capture (replaces deprecated ScriptProcessorNode)
-                const mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'audio/webm;codecs=pcm',
-                    audioBitsPerSecond: 16000
-                });
-                
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0 && isListening && socket && socket.readyState === WebSocket.OPEN) {
-                        event.data.arrayBuffer().then(buffer => {
-                            socket.send(buffer);
-                        });
-                    }
-                };
-                
-                // Start recording in small chunks for real-time streaming
-                processor = {
-                    start: () => {
-                        mediaRecorder.start(100); // 100ms chunks for real-time
-                    },
-                    stop: () => {
-                        if (mediaRecorder.state !== 'inactive') {
-                            mediaRecorder.stop();
-                        }
-                    }
-                };
-                
-                console.log('Audio initialized with MediaRecorder');
-                return true;
-            } catch (error) {
-                console.error('Error accessing microphone:', error);
-                
-                // Fallback to ScriptProcessorNode if MediaRecorder fails
-                try {
-                    console.log('Falling back to ScriptProcessorNode...');
-                    
-                    // Create a script processor for audio data (fallback)
-                    processor = audioContext.createScriptProcessor(4096, 1, 1);
-                    
-                    processor.onaudioprocess = (event) => {
-                        if (isListening && socket && socket.readyState === WebSocket.OPEN) {
-                            const inputData = event.inputBuffer.getChannelData(0);
-                            const outputData = new Int16Array(inputData.length);
-                            
-                            // Convert float32 to int16
-                            for (let i = 0; i < inputData.length; i++) {
-                                outputData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
-                            }
-                            
-                            socket.send(outputData.buffer);
-                        }
-                    };
-                    
-                    microphone.connect(processor);
-                    processor.connect(audioContext.destination);
-                    
-                    console.log('Audio initialized with ScriptProcessorNode (fallback)');
-                    return true;
-                } catch (fallbackError) {
-                    console.error('Error with fallback audio setup:', fallbackError);
-                    alert('Error accessing microphone. Please check permissions.');
-                    return false;
+
+                if (!response.ok) {
+                    throw new Error(`Failed to get token: ${response.status}`);
                 }
+
+                const data = await response.json();
+                return data.token;
+            } catch (error) {
+                console.error('Error fetching Scribe token:', error);
+                throw error;
             }
         }
 
-        // Smooth display update function
+        // Update display
         function updateDisplay(text) {
             if (captionElement.textContent === text) return;
-            
-            // Smooth transition
+
             captionElement.style.opacity = '0.9';
-            
+
             setTimeout(() => {
                 captionElement.textContent = text;
                 captionElement.style.opacity = '1';
-                
-                // Smooth scroll to bottom if content overflows
+
                 if (captionElement.scrollHeight > captionElement.clientHeight) {
                     captionElement.scrollTo({
                         top: captionElement.scrollHeight,
@@ -479,16 +434,14 @@
         }
 
         function updateLanguageConfig() {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
+            if (translationSocket && translationSocket.readyState === WebSocket.OPEN) {
+                translationSocket.send(JSON.stringify({
                     type: 'config',
                     inputLanguage: currentInputLang,
                     outputLanguage: currentOutputLang
                 }));
-                
-                // Reset accumulated text when changing languages
+
                 accumulatedText = '';
-                lastFinalLength = 0;
             }
         }
 
@@ -496,85 +449,218 @@
         function handleFlagClick(button) {
             const langType = button.dataset.langType;
             const langCode = button.dataset.lang;
-            
-            // Remove active class from all buttons of this type
+
             document.querySelectorAll(`[data-lang-type="${langType}"]`).forEach(btn => {
                 btn.classList.remove('active');
             });
-            
-            // Add active class to clicked button
+
             button.classList.add('active');
-            
-            // Update current language
+
             if (langType === 'input') {
                 currentInputLang = langCode;
             } else {
                 currentOutputLang = langCode;
             }
-            
-            // Update server configuration
+
             updateLanguageConfig();
+
+            // If listening, restart with new language
+            if (isListening) {
+                stopListening();
+                setTimeout(() => startListening(), 500);
+            }
         }
 
         async function startListening() {
-            if (!audioContext) {
-                const audioInitialized = await initAudio();
-                if (!audioInitialized) return;
-            }
-            
-            if (audioContext.state === 'suspended') {
-                await audioContext.resume();
-            }
-            
-            // Reset accumulated text for fresh start
-            accumulatedText = '';
-            lastFinalLength = 0;
-            updateDisplay('Listening...');
-            
-            isListening = true;
-            startBtn.style.display = 'none';
-            stopBtn.style.display = 'inline-block';
-            statusElement.textContent = 'Starting...';
-            statusElement.className = 'status listening';
-            
-            // Start audio recording
-            if (processor && processor.start) {
-                processor.start();
-            }
-            
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'start' }));
+            try {
+                statusElement.textContent = 'Initializing...';
+                statusElement.className = 'status listening';
+                updateDisplay('Connecting to ElevenLabs Scribe v2 Realtime...');
+
+                // Get token from server
+                const token = await fetchScribeToken();
+
+                // Configure Scribe v2 Realtime with optimal parameters
+                scribeConnection = await Scribe.connect({
+                    token: token,
+                    modelId: 'scribe_v2_realtime',
+                    languageCode: languageCodeMap[currentInputLang] || currentInputLang,
+                    audioFormat: 'pcm_16000', // 16kHz PCM for optimal quality/bandwidth balance
+                    commitStrategy: 'vad', // Use Voice Activity Detection for automatic segmentation
+                    vadSilenceThresholdSecs: 1.5, // 1.5 seconds of silence before committing
+                    vadThreshold: 0.4, // Moderate sensitivity
+                    minSpeechDurationMs: 100,
+                    minSilenceDurationMs: 100,
+                    includeTimestamps: false
+                });
+
+                // Request microphone access with optimal settings
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                // Handle partial transcripts (interim results)
+                scribeConnection.on('partial_transcript', (data) => {
+                    if (data && data.text) {
+                        const currentText = accumulatedText + ' ' + data.text;
+                        updateDisplay(currentText.trim());
+                    }
+                });
+
+                // Handle committed transcripts (final results)
+                scribeConnection.on('committed_transcript', async (data) => {
+                    if (data && data.text) {
+                        const text = data.text;
+
+                        // Check if translation is needed
+                        if (currentInputLang !== currentOutputLang && translationSocket && translationSocket.readyState === WebSocket.OPEN) {
+                            // Send to translation service
+                            translationSocket.send(JSON.stringify({
+                                type: 'translate',
+                                text: text,
+                                isFinal: true
+                            }));
+                        } else {
+                            // No translation needed, just append
+                            accumulatedText += ' ' + text;
+
+                            if (accumulatedText.length > 1000) {
+                                const trimPoint = accumulatedText.indexOf(' ', accumulatedText.length - 800);
+                                accumulatedText = accumulatedText.substring(trimPoint > 0 ? trimPoint : accumulatedText.length - 800);
+                            }
+
+                            updateDisplay(accumulatedText.trim());
+                        }
+                    }
+                });
+
+                // Handle errors
+                scribeConnection.on('error', (error) => {
+                    console.error('Scribe error:', error);
+                    updateDisplay(`Error: ${error.message || 'Connection error'}`);
+                    statusElement.textContent = 'Error';
+                    statusElement.className = 'status not-listening';
+                });
+
+                // Handle connection close
+                scribeConnection.on('close', () => {
+                    console.log('Scribe connection closed');
+                    if (isListening) {
+                        statusElement.textContent = 'Disconnected';
+                        statusElement.className = 'status not-listening';
+                    }
+                });
+
+                // Start streaming audio to Scribe
+                const audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                processor.onaudioprocess = (event) => {
+                    if (isListening && scribeConnection) {
+                        const inputData = event.inputBuffer.getChannelData(0);
+                        const outputData = new Int16Array(inputData.length);
+
+                        // Convert float32 to int16
+                        for (let i = 0; i < inputData.length; i++) {
+                            outputData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+                        }
+
+                        // Send audio to Scribe
+                        scribeConnection.send({
+                            audio_base_64: btoa(String.fromCharCode(...new Uint8Array(outputData.buffer))),
+                            sample_rate: 16000
+                        });
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                // Store for cleanup
+                window.audioContext = audioContext;
+                window.audioProcessor = processor;
+                window.audioStream = stream;
+
+                // Reset accumulated text
+                accumulatedText = '';
+                updateDisplay('Listening...');
+
+                isListening = true;
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                statusElement.textContent = 'Listening';
+                statusElement.className = 'status listening';
+                connectionStatusElement.textContent = 'Connected';
+                connectionStatusElement.className = 'connection-status connected';
+
+            } catch (error) {
+                console.error('Error starting Scribe:', error);
+                updateDisplay(`Error: ${error.message || 'Failed to start transcription'}`);
+                statusElement.textContent = 'Error';
+                statusElement.className = 'status not-listening';
+                connectionStatusElement.textContent = 'Disconnected';
+                connectionStatusElement.className = 'connection-status disconnected';
+                startBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
             }
         }
 
-        function stopListening() {
+        async function stopListening() {
             isListening = false;
             startBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
             statusElement.textContent = 'Stopped';
             statusElement.className = 'status not-listening';
-            
-            // Stop audio recording
-            if (processor && processor.stop) {
-                processor.stop();
+            connectionStatusElement.textContent = 'Disconnected';
+            connectionStatusElement.className = 'connection-status disconnected';
+
+            // Clean up audio
+            if (window.audioProcessor) {
+                window.audioProcessor.disconnect();
+                window.audioProcessor = null;
             }
-            
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'stop' }));
+
+            if (window.audioContext) {
+                await window.audioContext.close();
+                window.audioContext = null;
+            }
+
+            if (window.audioStream) {
+                window.audioStream.getTracks().forEach(track => track.stop());
+                window.audioStream = null;
+            }
+
+            // Close Scribe connection
+            if (scribeConnection) {
+                await scribeConnection.close();
+                scribeConnection = null;
             }
         }
 
-        // Initialize everything when page loads
+        // Initialize on page load
         window.addEventListener('load', () => {
-            initWebSocket();
-            
-            // Add event listeners to all flag buttons
+            initTranslationSocket();
+
             document.querySelectorAll('.flag-btn').forEach(button => {
                 button.addEventListener('click', () => handleFlagClick(button));
             });
-            
-            updateLanguageConfig();
+
+            connectionStatusElement.textContent = 'Ready';
+            connectionStatusElement.className = 'connection-status connected';
+            statusElement.textContent = 'Ready';
+            statusElement.className = 'status not-listening';
         });
+
+        // Export functions to global scope for button onclick handlers
+        window.startListening = startListening;
+        window.stopListening = stopListening;
     </script>
 </body>
-</html> 
+</html>
