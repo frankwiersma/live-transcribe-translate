@@ -1,14 +1,13 @@
 {
-  "name": "live-transcribe-translate-deepgram",
+  "name": "live-transcribe-translate-elevenlabs",
   "version": "2.0.0",
-  "description": "Simplified live transcription and translation using Deepgram and Google Gemini APIs",
+  "description": "Live transcription and translation using ElevenLabs Scribe v2 Realtime and Google Gemini APIs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@deepgram/sdk": "^3.4.0",
     "cross-fetch": "^4.0.0",
     "express": "^4.18.2",
     "ws": "^8.14.2",
@@ -20,7 +19,8 @@
   "keywords": [
     "speech-recognition",
     "translation",
-    "deepgram", 
+    "elevenlabs",
+    "scribe-v2",
     "live-captions",
     "conferences",
     "presentations"
